@@ -1,0 +1,9 @@
+# Godot generated cache and build artifacts
+.godot/
+builds/
+*.tmp
+*.log
+~$*.docx
+.DS_Store
+Thumbs.db
+desktop.ini
