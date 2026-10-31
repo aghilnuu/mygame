@@ -34,9 +34,8 @@ func _ready() -> void:
 	column.add_child(gap)
 
 	var enter := Button.new()
-	enter.text = "进入梦境  ·  即将开启"
-	enter.disabled = true
-	enter.tooltip_text = "梦境尚未开启"
+	enter.text = "进入梦境"
+	enter.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/battle/battle.tscn"))
 	_style_button(enter)
 	column.add_child(enter)
 	var quit := Button.new()
