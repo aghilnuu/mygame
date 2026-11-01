@@ -1,10 +1,10 @@
 extends Control
-signal exploration_won(remaining_hp: int)
+signal exploration_won(remaining_hp: int, final_cell: Vector2i)
 signal retry_encounter
 var exploration_battle := false
 const Model = preload("res://scripts/battle/battle_model.gd")
-const ORIGIN := Vector2(24, 100)
-const CELL := 58.0
+var board_origin := Vector2(24, 100)
+var cell_size := 58.0
 var model = Model.new()
 var shown: Dictionary
 var selected := -1
@@ -32,8 +32,9 @@ func _ready() -> void:
 	skin.default_font_size = 18
 	theme = skin
 	RenderingServer.set_default_clear_color(Color("091321"))
-	label_at("清醒梦 / 战斗试炼", Vector2(24, 12), Vector2(450, 38), 27)
-	button_at("重新开始", Vector2(940, 16), Vector2(140, 38), restart)
+	if not exploration_battle:
+		label_at("清醒梦 / 战斗试炼", Vector2(24, 12), Vector2(450, 38), 27)
+	button_at("重试战斗" if exploration_battle else "重新开始", Vector2(940, 16), Vector2(140, 38), restart)
 	button_at("返回菜单", Vector2(1090, 16), Vector2(160, 38), back)
 	hint = label_at("", Vector2(24, 58), Vector2(1220, 36), 18)
 	info = label_at("", Vector2(580, 100), Vector2(660, 170), 19)
@@ -61,6 +62,31 @@ func _ready() -> void:
 	add_child(scroll)
 	scroll.add_child(hand_row)
 	hand_row.add_theme_constant_override("separation", 8)
+	if exploration_battle:
+		# Keep the original room grid free for card targeting.
+		info.position = Vector2(785,138)
+		info.size = Vector2(475,112)
+		info.add_theme_font_size_override("font_size",17)
+		log_view.position = Vector2(785,257)
+		log_view.size = Vector2(460,119)
+		hint.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+		hint.position = Vector2(785,382)
+		hint.size = Vector2(460,58)
+		hint.add_theme_font_size_override("font_size",16)
+		confirm.position = Vector2(785,452)
+		confirm.size = Vector2(146,44)
+		for i in range(2):
+			actions[i].position = Vector2(939+i*153,452)
+			actions[i].size = Vector2(146,44)
+		tray.position = Vector2(785,512)
+		tray.add_theme_constant_override("separation",4)
+		for i in range(3):
+			var basic: Button = actions[i+2]
+			basic.position = Vector2(785+i*153,577)
+			basic.text = ["疾行 · 移动3","横砍 · 伤害6","深睡 · 抽3"][i]
+			basic.size = Vector2(146,44)
+		scroll.position.x = 72
+		scroll.size.x = 1170
 	shown = model.snapshot()
 	intent_popup.title = "敌人行动意图"
 	add_child(intent_popup)
@@ -166,13 +192,10 @@ func refresh() -> void:
 	else:
 		hint.text = "左键选牌或调整目标，右键查看卡牌；托盘牌可在详情中取回。最多排列5张。"
 	confirm.disabled = busy or selected >= 0 or model.queue.is_empty() or model.queue.any(func(c): return not c.valid) or not model.result.is_empty()
-	if exploration_battle and not busy:
-		if model.result == "战斗胜利":
-			confirm.text = "继续探索"
-			confirm.disabled = false
-			hint.text = "战斗胜利 · 点击继续探索，回到庭院。"
-		elif model.result == "梦境破碎":
-			hint.text = "梦境破碎 · 点击重新开始，重试这场战斗。"
+	if exploration_battle and shown.result == "战斗胜利":
+		hint.text = "梦魇消散，战斗胜利。"
+	elif exploration_battle and shown.result == "梦境破碎":
+		hint.text = "梦境破碎 · 点击重试战斗，再次迎战。"
 	for button in actions:
 		button.disabled = busy or not model.result.is_empty()
 	if not busy:
@@ -190,6 +213,12 @@ func refresh() -> void:
 			else:
 				button.text = "%d. 空槽" % (i+1)
 				button.disabled = true
+			if exploration_battle:
+				button.custom_minimum_size = Vector2(88,44)
+				button.add_theme_font_size_override("font_size",14)
+				if i < model.queue.size():
+					var slot: Dictionary = model.queue[i]
+					button.text = "%d · %s\n%s" % [i+1, Model.CARDS[slot.kind].name, "已就绪" if slot.valid else "待选目标"]
 			tray.add_child(button)
 	for child in hand_row.get_children():
 		hand_row.remove_child(child)
@@ -248,7 +277,7 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	if event.button_index != MOUSE_BUTTON_LEFT:
 		return
-	var local: Vector2 = (event.position - ORIGIN) / CELL
+	var local: Vector2 = (event.position - board_origin) / cell_size
 	var target := Vector2i(floori(local.x), floori(local.y))
 	if not model.inside(target):
 		return
@@ -288,9 +317,6 @@ func clear_tray() -> void:
 func run_plan() -> void:
 	if busy or confirm.disabled:
 		return
-	if exploration_battle and model.result == "战斗胜利":
-		exploration_won.emit(model.hp)
-		return
 	busy = true
 	selected = -1
 	inspected = -1
@@ -308,6 +334,9 @@ func run_plan() -> void:
 		refresh()
 		await get_tree().create_timer(0.38).timeout
 	busy = false
+	if exploration_battle and model.result == "战斗胜利":
+		exploration_won.emit(model.hp, model.player)
+		return
 	refresh()
 
 func restart() -> void:
@@ -329,19 +358,11 @@ func _draw() -> void:
 	if shown.is_empty():
 		return
 	var font := get_theme_default_font()
-	for y in range(7):
-		for x in range(9):
-			var cell := Vector2i(x,y)
-			var rect := Rect2(ORIGIN + Vector2(cell)*CELL, Vector2.ONE*(CELL-2))
-			var color := Color("203344") if (x+y)%2 == 0 else Color("1a2b3d")
-			if cell in model.obstacles:
-				color = Color("626777")
-			draw_rect(rect, color)
-			if cell in model.obstacles:
-				draw_string(font, rect.position+Vector2(16,35), "墙", HORIZONTAL_ALIGNMENT_LEFT, -1, 20)
+	if not exploration_battle:
+		draw_training_grid(font)
 	for enemy in shown.enemies:
 		if enemy.hp > 0 and enemy.intent == "attack" and enemy.mode == "lock":
-			draw_rect(Rect2(ORIGIN+Vector2(enemy.target)*CELL+Vector2(3,3),Vector2.ONE*(CELL-8)),Color("f0ac5a"),false,3)
+			draw_rect(Rect2(board_origin+Vector2(enemy.target)*cell_size+Vector2(3,3),Vector2.ONE*(cell_size-8)),Color("f0ac5a"),false,3)
 	var path_position: Vector2i = model.player
 	if not busy:
 		for card in model.queue:
@@ -365,7 +386,7 @@ func _draw() -> void:
 			for offset in offsets:
 				var cell: Vector2i = origin+offset
 				if model.inside(cell):
-					draw_rect(Rect2(ORIGIN+Vector2(cell)*CELL+Vector2(3,3),Vector2.ONE*(CELL-8)),Color(1.0,0.4,0.35,0.28))
+					draw_rect(Rect2(board_origin+Vector2(cell)*cell_size+Vector2(3,3),Vector2.ONE*(cell_size-8)),Color(1.0,0.4,0.35,0.28))
 			if inspected_card.kind == "slash" and inspected_card.valid:
 				var target_center := center(inspected_card.target)
 				draw_circle(target_center,22,Color("ffae89"),false,3)
@@ -400,4 +421,16 @@ func _draw() -> void:
 			draw_circle(center(endpoint),5,Color("ffe69b"))
 
 func center(cell: Vector2i) -> Vector2:
-	return ORIGIN+Vector2(cell)*CELL+Vector2.ONE*(CELL/2)
+	return board_origin+Vector2(cell)*cell_size+Vector2.ONE*(cell_size/2)
+
+func draw_training_grid(font: Font) -> void:
+	for y in range(7):
+		for x in range(9):
+			var cell := Vector2i(x,y)
+			var rect := Rect2(board_origin + Vector2(cell)*cell_size, Vector2.ONE*(cell_size-2))
+			var color := Color("203344") if (x+y)%2 == 0 else Color("1a2b3d")
+			if cell in model.obstacles:
+				color = Color("626777")
+			draw_rect(rect, color)
+			if cell in model.obstacles:
+				draw_string(font, rect.position+Vector2(16,35), "墙", HORIZONTAL_ALIGNMENT_LEFT, -1, 20)

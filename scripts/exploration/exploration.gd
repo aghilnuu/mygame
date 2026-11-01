@@ -13,6 +13,7 @@ const SHADE := Vector2i(6,4)
 const PORTAL := Vector2i(8,4)
 const ORIGIN := Vector2(72,148)
 const TILE := 53.0
+const ROOM_FLOOR := Rect2i(1,1,11,7)
 const DIRECTIONS := {KEY_W: Vector2i.UP, KEY_A: Vector2i.LEFT, KEY_S: Vector2i.DOWN, KEY_D: Vector2i.RIGHT}
 
 var depth := 1
@@ -54,7 +55,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 func step(direction: Vector2i) -> void:
 	var target := player + direction
-	if not Rect2i(1,1,11,7).has_point(target) or target in WALLS[room]:
+	if not ROOM_FLOOR.has_point(target) or target in WALLS[room]:
 		return
 	if (room == 1 and not cleared and target == SHADE) or (room == 2 and target == PORTAL):
 		return
@@ -97,7 +98,15 @@ func start_encounter() -> void:
 		return
 	encounter = BattleScene.instantiate()
 	encounter.exploration_battle = true
+	encounter.board_origin = ORIGIN
+	encounter.cell_size = TILE
+	encounter.model.floor_bounds = ROOM_FLOOR
+	encounter.model.obstacles = WALLS[room].duplicate()
+	encounter.model.player = player
+	encounter.model.enemies[0].pos = SHADE
+	encounter.model.enemies[1].pos = Vector2i(9,3)
 	encounter.model.hp = health
+	encounter.model.refresh_intents()
 	encounter.exploration_won.connect(finish_encounter)
 	encounter.retry_encounter.connect(retry)
 	menu.hide()
@@ -113,11 +122,12 @@ func retry() -> void:
 	detach_battle()
 	start_encounter()
 
-func finish_encounter(remaining_hp: int) -> void:
+func finish_encounter(remaining_hp: int, final_cell: Vector2i) -> void:
 	detach_battle()
+	player = final_cell
 	health = remaining_hp
 	cleared = true
-	note = "梦魇消散。东门已开启。"
+	note = "梦魇消散，东门已开启。WASD 继续探索。"
 	menu.show()
 	queue_redraw()
 
@@ -142,11 +152,10 @@ func glyph(cell: Vector2i, value: String, color: Color) -> void:
 	text_at(p+Vector2(14,34), value, 22, color)
 
 func _draw() -> void:
-	if is_instance_valid(encounter):
-		return
+	var fighting := is_instance_valid(encounter)
 	draw_rect(Rect2(Vector2.ZERO, size), Color("0a1220"))
 	var accent: Color = [Color("81d6cb"), Color("cf9ac5"), Color("b4a5eb")][room]
-	text_at(Vector2(72,49),"清醒梦     /     梦境探索",20,Color("94aabe"))
+	text_at(Vector2(72,49),"清醒梦     /     指令战斗" if fighting else "清醒梦     /     梦境探索",20,Color("94aabe"))
 	text_at(Vector2(72,111),ROOMS[room],38)
 	text_at(Vector2(780,111),"第 %02d 层" % depth,28,accent)
 	for y in range(9):
@@ -166,6 +175,8 @@ func _draw() -> void:
 		glyph(LEFT_DOOR,"门",accent)
 	if room < 2:
 		glyph(RIGHT_DOOR,"封" if room == 1 and not cleared else "门",accent)
+	if fighting:
+		return
 	if room == 1 and not cleared:
 		glyph(SHADE,"魇",Color("fa899b"))
 	if room == 2:

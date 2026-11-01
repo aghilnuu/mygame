@@ -8,6 +8,7 @@ const CARDS = {
 }
 var player := Vector2i(2, 4)
 var hp := 30
+var floor_bounds := Rect2i(0,0,9,7)
 var obstacles: Array = [Vector2i(4, 2), Vector2i(4, 3), Vector2i(6, 5)]
 var enemies: Array = []
 var hand: Array = []
@@ -35,7 +36,7 @@ func _init(seed_value: int = 42) -> void:
 	events.clear()
 
 func inside(p: Vector2i) -> bool:
-	return p.x >= 0 and p.x < 9 and p.y >= 0 and p.y < 7
+	return floor_bounds.has_point(p)
 
 func blocked(p: Vector2i) -> bool:
 	if not inside(p) or p in obstacles:

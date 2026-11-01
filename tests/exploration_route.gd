@@ -46,6 +46,11 @@ func run() -> void:
 	if not is_instance_valid(battle):
 		quit(1)
 		return
+	check(battle.model.player == world.player and battle.model.enemies[0].pos == world.SHADE, "Player and nightmare keep room positions")
+	check(battle.model.obstacles == world.WALLS[world.room] and battle.model.blocked(world.RIGHT_DOOR), "Combat shares walls and room boundary")
+	check(battle.center(world.player) == world.ORIGIN + (Vector2(world.player)+Vector2(0.5,0.5))*world.TILE, "Same screen tile in both modes")
+	key(world,KEY_A)
+	check(world.player == Vector2i(7,4) and battle.model.player == world.player, "Exploration input suspended in combat")
 	battle.model.hp = 0
 	battle.model.check_result()
 	if battle.model.result != "梦境破碎":
@@ -54,8 +59,18 @@ func run() -> void:
 	battle.restart()
 	battle = world.encounter
 	check(battle.model.hp == world.health and not world.cleared, "Retry restores encounter entry")
+	var model = battle.model
+	battle.choose("dash")
+	var move := InputEventMouseButton.new()
+	move.button_index = MOUSE_BUTTON_LEFT
+	move.pressed = true
+	move.double_click = true
+	move.position = battle.center(Vector2i(10,4))
+	battle._gui_input(move)
+	await battle.run_plan()
+	check(model.player == Vector2i(10,4), "Cards target the eastern end of the courtyard")
 	for turn in range(25):
-		if battle.model.result != "":
+		if model.result != "":
 			break
 		var next_card := "sleep"
 		var target := Vector2i.ZERO
@@ -82,13 +97,15 @@ func run() -> void:
 				click.position = battle.center(target)
 				battle._gui_input(click)
 		await battle.run_plan()
-	check(battle.model.result == "战斗胜利", "Win actual encounter with cards")
-	if battle.model.result != "战斗胜利":
+	check(model.result == "战斗胜利", "Win actual encounter with cards")
+	if model.result != "战斗胜利":
 		quit(1)
 		return
-	var hp: int = battle.model.hp
-	battle.confirm.pressed.emit()
-	check(world.cleared and world.encounter == null and world.health == hp and world.player == Vector2i(7,4), "Victory restores room and health")
+	var hp: int = model.hp
+	check(world.cleared and world.encounter == null and world.health == hp and world.player == Vector2i(10,4), "Automatic victory restores WASD on last combat tile")
+	key(world,KEY_W)
+	check(world.player == Vector2i(10,3), "WASD moves immediately after victory")
+	key(world,KEY_S)
 	key(world,KEY_O)
 	check(world.encounter == null, "Cleared encounter cannot respawn")
 	key(world,KEY_D,4)
