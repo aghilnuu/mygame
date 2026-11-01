@@ -1,9 +1,9 @@
 extends RefCounted
 ## Rules only: no scene nodes, rendering or animation dependencies.
 const CARDS = {
-	"dash": {"name": "疾行", "flow": 1, "attack": false},
+	"dash": {"name": "疾行", "flow": 1, "draw": 1, "attack": false},
 	"slash": {"name": "横砍", "flow": 1, "attack": true},
-	"sleep": {"name": "深睡", "flow": 1, "attack": false},
+	"sleep": {"name": "深睡", "flow": 1, "draw": 3, "attack": false},
 	"rage": {"name": "狂怒", "flow": 1, "attack": true, "armor": true}
 }
 var player := Vector2i(2, 4)
@@ -235,37 +235,32 @@ func execute() -> Array:
 						break
 					player = cell
 					record("疾行：移动")
-				if not interrupted:
-					record("疾行：抽取%d张牌" % draw_cards(1))
 			"slash":
 				var hit := damage_at(card.target, 6)
 				record("横砍：6点伤害" if hit else "横砍：打空")
-			"sleep":
-				record("深睡：抽取%d张牌" % draw_cards(3))
 			"rage":
 				var repeats := 2 if previous_attack else 1
 				for repeat_index in range(repeats):
 					if not result.is_empty():
 						break
-					if repeat_index > 0:
-						grant_super_armor()
 					for dir in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
 						damage_at(player + dir, 8)
 					record("狂怒%s：四邻格各8点伤害" % ("连招追加" if repeat_index == 1 else ""))
 					check_result()
-					# The combo copy keeps attack/armor but explicitly has flow 0.
-					var flow_count: int = CARDS.rage.flow if repeat_index == 0 else 0
-					for tick in range(flow_count):
-						if result.is_empty():
-							enemy_round()
+		var requested: int = CARDS[card.kind].get("draw", 0)
+		if not interrupted and requested > 0:
+			var shuffles_before := shuffle_count
+			var drawn := draw_cards(requested)
+			var detail := "（洗回弃牌后补抽）" if shuffle_count > shuffles_before else ""
+			record("%s：抽取%d，实际入手%d张%s" % [CARDS[card.kind].name, requested, drawn, detail])
 		check_result()
 		if not interrupted:
 			completed += 1
 			previous_attack = CARDS[card.kind].attack
-			if card.kind != "rage":
-				for tick in range(CARDS[card.kind].flow):
-					if result.is_empty():
-						enemy_round()
+			# All damage instructions, including combo damage, precede card flow.
+			for tick in range(CARDS[card.kind].flow):
+				if result.is_empty():
+					enemy_round()
 	for uid in used:
 		discard.append(uid)
 	queue.clear()

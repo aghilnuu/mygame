@@ -49,11 +49,16 @@ func run() -> void:
 	scene.card_popup.hide()
 	var hand_count: int = scene.model.hand.size()
 	scene.hand_row.get_child(0).gui_input.emit(right_click)
-	verify("流逝0" in scene.card_popup.dialog_text and scene.model.hand.size() == hand_count, "Right clicking special card shows combo without consuming")
+	verify("多造成一次伤害" in scene.card_popup.dialog_text and scene.model.hand.size() == hand_count, "Right clicking special card shows combo without consuming")
 	scene.card_popup.hide()
 	scene.tray.get_child(0).gui_input.emit(right_click)
 	verify(scene.return_card_button.visible and scene.model.queue.size() == before_count, "Right clicking tray shows details without removing card")
 	scene.card_popup.custom_action.emit("return_card")
 	verify(scene.model.queue.is_empty() and scene.model.hand.size() == hand_count+1, "Detail action returns tray special card to hand")
-	print("BATTLE_UI: 11 checks, %d failures" % failures)
+	scene.choose("sleep")
+	scene.run_plan()
+	verify(scene.busy and scene.hand_row.get_child_count() == 8 and scene.hand_row.get_child(7).disabled, "Drawn cards appear before enemy playback while planning stays locked")
+	while scene.busy:
+		await process_frame
+	print("BATTLE_UI: 12 checks, %d failures" % failures)
 	quit(0 if failures == 0 else 1)

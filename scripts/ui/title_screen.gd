@@ -1,5 +1,5 @@
 extends Control
-## Stage 1 startup scene. Combat and exploration are introduced in later stages.
+## Entry point for a new dream.
 
 var _time: float = 0.0
 
@@ -34,8 +34,9 @@ func _ready() -> void:
 	column.add_child(gap)
 
 	var enter := Button.new()
+	enter.name = "EnterDream"
 	enter.text = "进入梦境"
-	enter.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/battle/battle.tscn"))
+	enter.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/exploration/exploration.tscn"))
 	_style_button(enter)
 	column.add_child(enter)
 	var quit := Button.new()
@@ -44,7 +45,7 @@ func _ready() -> void:
 	_style_button(quit)
 	quit.pressed.connect(_on_quit_pressed)
 	column.add_child(quit)
-	quit.grab_focus()
+	enter.grab_focus()
 
 	var lower_space := Control.new()
 	lower_space.size_flags_vertical = Control.SIZE_EXPAND_FILL

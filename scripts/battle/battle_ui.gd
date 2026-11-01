@@ -1,4 +1,7 @@
 extends Control
+signal exploration_won(remaining_hp: int)
+signal retry_encounter
+var exploration_battle := false
 const Model = preload("res://scripts/battle/battle_model.gd")
 const ORIGIN := Vector2(24, 100)
 const CELL := 58.0
@@ -74,7 +77,7 @@ func _ready() -> void:
 		intent_button.add_theme_font_size_override("font_size", 16)
 		intent_buttons.append(intent_button)
 	refresh()
-	say("开战抽取5张特殊牌。狂怒：霸体、四邻格8伤害、流逝1；连招追加流逝0的狂怒。")
+	say("开战抽取5张特殊牌。狂怒连招：连续造成两次8点伤害，之后流逝1。")
 
 func label_at(text: String, pos: Vector2, dimensions: Vector2, font_size: int) -> Label:
 	var label := Label.new()
@@ -106,10 +109,10 @@ func bind_card_details(button: Button, kind: String, tray_index: int = -1) -> vo
 func show_card_details(kind: String, tray_index: int = -1) -> void:
 	detail_index = tray_index
 	var descriptions := {
-		"dash": "基础卡牌 · 可无限使用\n移动3：分段选择同行或同列格子，累计最多3格，可原地。\n双击终点或点击完成路线；受阻停在前格并终止后续指令。\n随后抽1张特殊牌，流逝1。",
+		"dash": "基础卡牌 · 可无限使用\n移动3：分段选择同行或同列格子，累计最多3格，可原地。\n双击终点或点击完成路线；受阻停在前格并终止后续指令。\n移动完成后立即抽取1张特殊牌，再流逝1。",
 		"slash": "基础卡牌 · 攻击牌 · 可无限使用\n选择预计位置周围8格中的一格，造成6点伤害。\n目标格没有敌人时仍执行动作和流逝。\n流逝1。",
 		"sleep": "基础卡牌 · 可无限使用\n抽3张特殊卡牌。\n抽牌堆耗尽时洗回弃牌堆；两个牌堆都为空时停止抽牌。\n流逝1。",
-		"rage": "特殊卡牌 · 攻击牌\n对周围4个相邻格中的敌人各造成8点伤害，获得霸体，流逝1。\n连招：紧接攻击牌时，追加一次流逝0的狂怒，保留攻击和霸体。\n霸体：仍受伤害，但免疫受击中断；所有敌人完成一回合后解除。\n使用后进入弃牌堆，连招追加不消耗额外手牌。"
+		"rage": "特殊卡牌 · 攻击牌\n对周围4个相邻格中的敌人各造成8点伤害，获得霸体，流逝1。\n连招：紧接攻击牌时，多造成一次伤害。两次伤害连续结算，之后流逝1。\n霸体只获得一次：仍受伤害，但免疫受击中断；敌方回合结束后解除。\n使用后进入弃牌堆，追加伤害不消耗额外手牌。"
 	}
 	card_popup.title = Model.CARDS[kind].name + " · 卡牌详情"
 	card_popup.dialog_text = descriptions[kind]
@@ -163,6 +166,13 @@ func refresh() -> void:
 	else:
 		hint.text = "左键选牌或调整目标，右键查看卡牌；托盘牌可在详情中取回。最多排列5张。"
 	confirm.disabled = busy or selected >= 0 or model.queue.is_empty() or model.queue.any(func(c): return not c.valid) or not model.result.is_empty()
+	if exploration_battle and not busy:
+		if model.result == "战斗胜利":
+			confirm.text = "继续探索"
+			confirm.disabled = false
+			hint.text = "战斗胜利 · 点击继续探索，回到庭院。"
+		elif model.result == "梦境破碎":
+			hint.text = "梦境破碎 · 点击重新开始，重试这场战斗。"
 	for button in actions:
 		button.disabled = busy or not model.result.is_empty()
 	if not busy:
@@ -181,17 +191,18 @@ func refresh() -> void:
 				button.text = "%d. 空槽" % (i+1)
 				button.disabled = true
 			tray.add_child(button)
-		for child in hand_row.get_children():
-			hand_row.remove_child(child)
-			child.queue_free()
-		for uid in model.hand:
-			var button := Button.new()
-			button.text = "狂怒 #%d" % (uid+1)
-			button.tooltip_text = "特殊牌：进入霸体，四邻格各8伤害，流逝1。接在攻击牌后追加一次流逝0的狂怒（仍有攻击与霸体）。\n霸体仍受伤害，但免疫受击中断；持续到敌方完整一回合结束。"
-			button.custom_minimum_size = Vector2(140, 44)
-			button.pressed.connect(func(): choose("rage", uid))
-			bind_card_details(button, "rage")
-			hand_row.add_child(button)
+	for child in hand_row.get_children():
+		hand_row.remove_child(child)
+		child.queue_free()
+	for uid in shown.hand:
+		var button := Button.new()
+		button.disabled = busy or not model.result.is_empty()
+		button.text = "狂怒 #%d" % (uid+1)
+		button.tooltip_text = "特殊牌：霸体，四邻格各8伤害，流逝1。接在攻击牌后多造成一次伤害，两次伤害之间没有敌方回合。\n追加伤害不重复获得霸体或触发流逝。"
+		button.custom_minimum_size = Vector2(140, 44)
+		button.pressed.connect(func(): choose("rage", uid))
+		bind_card_details(button, "rage")
+		hand_row.add_child(button)
 	queue_redraw()
 
 func choose(kind: String, uid: int = -1) -> void:
@@ -277,6 +288,9 @@ func clear_tray() -> void:
 func run_plan() -> void:
 	if busy or confirm.disabled:
 		return
+	if exploration_battle and model.result == "战斗胜利":
+		exploration_won.emit(model.hp)
+		return
 	busy = true
 	selected = -1
 	inspected = -1
@@ -300,7 +314,10 @@ func restart() -> void:
 	if busy:
 		say("请等待本组指令演出结束。")
 		return
-	get_tree().reload_current_scene()
+	if exploration_battle:
+		retry_encounter.emit()
+	else:
+		get_tree().reload_current_scene()
 
 func back() -> void:
 	if busy:

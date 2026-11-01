@@ -12,6 +12,18 @@ func expect(condition: bool, title: String) -> void:
 func _initialize() -> void:
 	var m = Model.new()
 	expect(m.hand.size() == 5 and m.deck.size() == 5, "Opening hand")
+	m.hand.clear()
+	m.deck = [1]
+	m.discard = [2,3,4]
+	m.add_card("sleep")
+	var draw_events: Array = m.execute()
+	var first: Dictionary = draw_events.front()
+	expect(first.hand.size() == 3 and first.hand[0] == 1 and first.shuffle == 1 and first.deck == 1 and first.discard == 0, "Draw immediately from deck then shuffled discard, before flow")
+	m.add_card("sleep")
+	draw_events = m.execute()
+	first = draw_events.front()
+	expect(first.hand.size() == 4 and first.deck == 0 and first.shuffle == 1 and draw_events.size() > 1, "Insufficient cards: draw remaining one, continue to flow")
+	m = Model.new()
 	for i in range(5):
 		expect(m.add_card("sleep"), "Basic cards reusable")
 	expect(not m.add_card("sleep"), "Five slot limit")
@@ -43,8 +55,11 @@ func _initialize() -> void:
 	var frames: Array = m.execute()
 	expect(m.enemies[0].hp == 18, "Slash 6 plus rage 8 twice")
 	expect(frames.filter(func(f): return "连招追加" in f.message).size() == 1, "Combo event")
-	expect(frames.filter(func(f): return f.message == "敌方回合结束，更新下一回合意图").size() == 2, "Only slash and base rage flow; combo rage has zero flow")
-	expect(m.super_armor, "Combo copy retains armor until next enemy round")
+	expect(frames.filter(func(f): return f.message == "敌方回合结束，更新下一回合意图").size() == 2, "Slash and rage each flow once")
+	expect(not m.super_armor, "Armor expires after rage enemy round; bonus does not reapply it")
+	var damage_frames: Array = frames.filter(func(f): return f.message.begins_with("狂怒"))
+	expect(damage_frames.size() == 2 and frames.find(damage_frames[1]) == frames.find(damage_frames[0])+1, "Both rage damage steps occur before any enemy action")
+	expect(frames.filter(func(f): return f.message.begins_with("进入霸体")).size() == 1, "Bonus damage grants no additional armor")
 	expect(m.discard.size() == 1 and m.hand.size() == 4, "Special discard")
 	m.deck.clear()
 	expect(m.draw_cards(1) == 1 and m.shuffle_count == 1 and m.discard.is_empty(), "Recycle discard")
@@ -100,7 +115,7 @@ func _initialize() -> void:
 	m.add_card("rage",m.hand[0])
 	frames = m.execute()
 	expect(m.hp == 21 and not m.interrupted, "Rage combo does not add enemy damage from extra flow")
-	expect(m.discard.size() == 3 and m.super_armor, "Following combo copy reapplies armor without consuming another card")
+	expect(m.discard.size() == 3 and not m.super_armor, "Combo consumes one card and ends armor after enemy round")
 	m.hp = 2
 	m.grant_super_armor()
 	m.enemy_round()
