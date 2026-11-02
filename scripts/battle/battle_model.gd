@@ -1,11 +1,8 @@
 extends RefCounted
 ## Rules only: no scene nodes, rendering or animation dependencies.
-const CARDS = {
-	"dash": {"name": "疾行", "flow": 1, "draw": 1, "attack": false},
-	"slash": {"name": "横砍", "flow": 1, "attack": true},
-	"sleep": {"name": "深睡", "flow": 1, "draw": 3, "attack": false},
-	"rage": {"name": "狂怒", "flow": 1, "attack": true, "armor": true}
-}
+const Catalog = preload("res://data/battle_catalog.gd")
+var cards: Dictionary
+var copy_kinds: Array[String] = []
 var player := Vector2i(2, 4)
 var hp := 30
 var floor_bounds := Rect2i(0,0,9,7)
@@ -22,18 +19,25 @@ var result := ""
 var shuffle_count := 0
 var rng := RandomNumberGenerator.new()
 
-func _init(seed_value: int = 42) -> void:
+func _init(seed_value: int = 42, pack: Dictionary = Catalog.STARTING_PACK, definitions: Dictionary = Catalog.CARDS) -> void:
 	rng.seed = seed_value
-	for i in range(10):
-		deck.append(i)
+	cards = definitions
+	for kind in pack:
+		assert(cards.has(kind) and cards[kind].special and pack[kind] >= 0)
+		for copy in range(pack[kind]):
+			deck.append(copy_kinds.size())
+			copy_kinds.append(kind)
 	shuffle_deck()
 	draw_cards(5)
-	enemies = [
-		{"name": "守望者", "pos": Vector2i(4, 4), "hp": 24, "mode": "lock", "intent": "", "target": player},
-		{"name": "追猎者", "pos": Vector2i(7, 2), "hp": 24, "mode": "track", "intent": "", "target": player}
-	]
+	configure_enemies(Catalog.TRAINING)
+
+func configure_enemies(lineup: Array) -> void:
+	enemies.clear()
+	for spawn in lineup:
+		var enemy: Dictionary = spawn.stats.duplicate()
+		enemy.pos = spawn.pos
+		enemies.append(enemy)
 	refresh_intents()
-	events.clear()
 
 func inside(p: Vector2i) -> bool:
 	return floor_bounds.has_point(p)
@@ -72,30 +76,30 @@ func projected_position(before: int = -1) -> Vector2i:
 	var limit := queue.size() if before < 0 else before
 	for i in range(limit):
 		var card: Dictionary = queue[i]
-		if card.kind == "dash" and card.valid and not card.path.is_empty():
+		if cards[card.kind].effect == "move" and card.valid and not card.path.is_empty():
 			pos = card.path.back()
 	return pos
 
 func add_card(kind: String, uid: int = -1) -> bool:
-	if queue.size() >= 5 or not CARDS.has(kind) or not result.is_empty():
+	if queue.size() >= 5 or not cards.has(kind) or not result.is_empty():
 		return false
-	if kind == "rage":
-		if uid not in hand:
+	if cards[kind].special:
+		if uid not in hand or copy_kinds[uid] != kind:
 			return false
 		hand.erase(uid)
-	queue.append({"kind": kind, "uid": uid, "path": [], "target": Vector2i(-1, -1), "valid": kind in ["sleep", "rage"]})
+	queue.append({"kind": kind, "uid": uid, "path": [], "target": Vector2i(-1, -1), "valid": not Catalog.aimed(cards[kind])})
 	return true
 
 func invalidate_after(index: int) -> void:
 	for i in range(index + 1, queue.size()):
-		if queue[i].kind in ["dash", "slash"]:
+		if Catalog.aimed(cards[queue[i].kind]):
 			queue[i].valid = false
 			queue[i].path = []
 			queue[i].target = Vector2i(-1, -1)
 
 func remove_card(index: int) -> void:
 	var card: Dictionary = queue[index]
-	if card.kind == "rage":
+	if cards[card.kind].special:
 		hand.append(card.uid)
 	queue.remove_at(index)
 	invalidate_after(index - 1)
@@ -105,12 +109,12 @@ func set_target(index: int, target: Vector2i, path: Array = []) -> bool:
 	var origin := projected_position(index)
 	if not inside(target):
 		return false
-	if card.kind == "slash":
+	if cards[card.kind].effect == "strike":
 		var delta := target - origin
-		if delta == Vector2i.ZERO or maxi(absi(delta.x), absi(delta.y)) > 1:
+		if delta not in Catalog.offsets(cards[card.kind]):
 			return false
-	elif card.kind == "dash":
-		if path.size() > 3:
+	elif cards[card.kind].effect == "move":
+		if path.size() > cards[card.kind].move:
 			return false
 		var last := origin
 		for cell in path:
@@ -154,7 +158,7 @@ func refresh_intents() -> void:
 		if enemy.hp <= 0:
 			continue
 		var delta: Vector2i = enemy.pos - player
-		enemy.intent = "attack" if maxi(absi(delta.x), absi(delta.y)) <= 1 else "move"
+		enemy.intent = "attack" if maxi(absi(delta.x), absi(delta.y)) <= enemy.get("reach", Catalog.WATCHER.reach) else "move"
 		enemy.target = player
 
 func step_toward(start: Vector2i) -> Vector2i:
@@ -183,18 +187,26 @@ func enemy_round() -> void:
 		if enemy.hp <= 0 or not result.is_empty():
 			continue
 		if enemy.intent == "move":
-			enemy.pos = step_toward(enemy.pos)
-			record(enemy.name + "移动一格")
+			var moved := 0
+			for step in range(enemy.get("steps", Catalog.WATCHER.steps)):
+				var next := step_toward(enemy.pos)
+				if next == enemy.pos:
+					break
+				enemy.pos = next
+				moved += 1
+			var action := "原地待命" if moved == 0 else "移动%d格" % moved
+			record(enemy.name + action)
 		else:
 			var target: Vector2i = enemy.target if enemy.mode == "lock" else player
 			var delta: Vector2i = target - enemy.pos
-			if target == player and maxi(absi(delta.x), absi(delta.y)) <= 1:
-				hp -= 3
+			if target == player and maxi(absi(delta.x), absi(delta.y)) <= enemy.get("reach", Catalog.WATCHER.reach):
+				var damage: int = enemy.get("damage", Catalog.WATCHER.damage)
+				hp -= damage
 				var protected := super_armor
 				if not protected:
 					interrupted = true
 				check_result()
-				record(enemy.name + ("命中，受到3点伤害，霸体抵抗中断" if protected else "命中，受到3点伤害，指令中断"))
+				record("%s命中，受到%d点伤害，%s" % [enemy.name, damage, "霸体抵抗中断" if protected else "指令中断"])
 			else:
 				record(enemy.name + "攻击落空")
 	if super_armor:
@@ -220,15 +232,16 @@ func execute() -> Array:
 	var completed := 0
 	for card in queue:
 		if interrupted or not result.is_empty():
-			if card.kind == "rage":
+			if cards[card.kind].special:
 				hand.append(card.uid)
 			continue
-		if card.kind == "rage":
+		if cards[card.kind].special:
 			used.append(card.uid)
-		if CARDS[card.kind].get("armor", false):
+		if cards[card.kind].get("armor", false):
 			grant_super_armor()
-		match card.kind:
-			"dash":
+		var definition: Dictionary = cards[card.kind]
+		match definition.effect:
+			"move":
 				for cell in card.path:
 					if blocked(cell):
 						interrupted = true
@@ -236,30 +249,30 @@ func execute() -> Array:
 						break
 					player = cell
 					record("疾行：移动")
-			"slash":
-				var hit := damage_at(card.target, 6)
-				record("横砍：6点伤害" if hit else "横砍：打空")
-			"rage":
-				var repeats := 2 if previous_attack else 1
+			"strike":
+				var hit := damage_at(card.target, definition.damage)
+				record("%s：%s" % [definition.name, "%d点伤害" % definition.damage if hit else "打空"])
+			"burst":
+				var repeats: int = 1 + (definition.get("combo_hits",0) if previous_attack else 0)
 				for repeat_index in range(repeats):
 					if not result.is_empty():
 						break
-					for dir in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
-						damage_at(player + dir, 8)
-					record("狂怒%s：四邻格各8点伤害" % ("连招追加" if repeat_index == 1 else ""))
+					for dir in Catalog.offsets(definition):
+						damage_at(player + dir, definition.damage)
+					record("%s%s：范围内各%d点伤害" % [definition.name, "连招追加" if repeat_index > 0 else "", definition.damage])
 					check_result()
-		var requested: int = CARDS[card.kind].get("draw", 0)
+		var requested: int = cards[card.kind].get("draw", 0)
 		if not interrupted and requested > 0:
 			var shuffles_before := shuffle_count
 			var drawn := draw_cards(requested)
 			var detail := "（洗回弃牌后补抽）" if shuffle_count > shuffles_before else ""
-			record("%s：抽取%d，实际入手%d张%s" % [CARDS[card.kind].name, requested, drawn, detail])
+			record("%s：抽取%d，实际入手%d张%s" % [cards[card.kind].name, requested, drawn, detail])
 		check_result()
 		if not interrupted:
 			completed += 1
-			previous_attack = CARDS[card.kind].attack
+			previous_attack = cards[card.kind].attack
 			# All damage instructions, including combo damage, precede card flow.
-			for tick in range(CARDS[card.kind].flow):
+			for tick in range(cards[card.kind].flow):
 				if result.is_empty():
 					enemy_round()
 	for uid in used:

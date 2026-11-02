@@ -1,6 +1,7 @@
 extends Control
 
 const BattleScene = preload("res://scenes/battle/battle.tscn")
+const Catalog = preload("res://data/battle_catalog.gd")
 const ROOMS := ["入梦回廊", "回声庭院", "星门之间"]
 const WALLS := [
 	[Vector2i(4,2), Vector2i(4,3), Vector2i(8,5), Vector2i(8,6)],
@@ -10,6 +11,10 @@ const WALLS := [
 const LEFT_DOOR := Vector2i(0,4)
 const RIGHT_DOOR := Vector2i(12,4)
 const SHADE := Vector2i(6,4)
+const COURTYARD_ENCOUNTER = [
+	{"stats":Catalog.WATCHER, "pos":SHADE},
+	{"stats":Catalog.HUNTER, "pos":Vector2i(9,3)}
+]
 const PORTAL := Vector2i(8,4)
 const ORIGIN := Vector2(72,148)
 const TILE := 53.0
@@ -103,10 +108,8 @@ func start_encounter() -> void:
 	encounter.model.floor_bounds = ROOM_FLOOR
 	encounter.model.obstacles = WALLS[room].duplicate()
 	encounter.model.player = player
-	encounter.model.enemies[0].pos = SHADE
-	encounter.model.enemies[1].pos = Vector2i(9,3)
+	encounter.model.configure_enemies(COURTYARD_ENCOUNTER)
 	encounter.model.hp = health
-	encounter.model.refresh_intents()
 	encounter.exploration_won.connect(finish_encounter)
 	encounter.retry_encounter.connect(retry)
 	menu.hide()
